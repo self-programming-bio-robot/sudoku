@@ -15,11 +15,21 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-        jcenter() // Warning: this repository is going to shut down soon
-
-        maven { url "https://jitpack.io" }
-
-        maven { url "http://repo.boox.com/repository/maven-public/" }
+        maven {
+            url "https://repo.boox.com/repository/maven-public/"
+            content {
+                includeGroup "com.onyx.android.sdk"
+            }
+        }
+        maven {
+            url "https://repo.boox.com/repository/proxy-public/"
+            content {
+                // Legacy dependencies of onyxsdk-base 1.6.4.
+                includeVersion "org.apache.commons.io", "commonsIO", "2.5.0"
+                includeVersion "pub.devrel", "easypermissions", "0.2.1"
+                includeVersion "com.tencent", "mmkv", "1.0.15"
+            }
+        }
     }
 }
 

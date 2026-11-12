@@ -5,7 +5,7 @@ plugins {
 
 android {
     compileSdkVersion 28
-    buildToolsVersion "29.0.0"
+    buildToolsVersion "30.0.2"
 
     defaultConfig {
         applicationId "com.onyx.zhdanov.game.Sudoku"
@@ -17,7 +17,6 @@ android {
 
         javaCompileOptions {
             annotationProcessorOptions {
-                includeCompileClasspath = true
                 arguments=['targetModuleName':'Scribble']
             }
         }
@@ -67,5 +66,5 @@ dependencies {
     }
     api "com.android.support.constraint:constraint-layout:2.0.4"
 
-    testImplementation 'junit:junit:4.+'
+    testImplementation 'junit:junit:4.13.2'
 }
