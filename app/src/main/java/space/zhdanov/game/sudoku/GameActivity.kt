@@ -8,15 +8,15 @@ import android.support.v7.app.AppCompatActivity
 import android.util.Log
 import android.view.Window
 import android.view.WindowManager
+import com.onyx.android.sdk.rx.RxManager
 import io.sentry.Sentry
-import io.sentry.SentryLevel
 import space.zhdanov.game.sudoku.components.GameView
 import space.zhdanov.game.sudoku.databinding.ActivityGameBinding
-import space.zhdanov.game.sudoku.models.Field.Companion.FIELD_SIZE
 import space.zhdanov.game.sudoku.models.Grid
-import space.zhdanov.game.sudoku.utils.Array2D
+import space.zhdanov.game.sudoku.models.Grid.Companion.FIELD_SIZE
 import space.zhdanov.game.sudoku.utils.CONTINUE_EXTRA
 import space.zhdanov.game.sudoku.utils.CONTINUE_PREFERENCES
+import space.zhdanov.game.sudoku.utils.DEFAULT_DIFFICULTY
 import space.zhdanov.game.sudoku.utils.DIFFICULT_EXTRA
 import space.zhdanov.game.sudoku.utils.GAME_PREFERENCES_FILE
 import space.zhdanov.game.sudoku.utils.PLAYER_SOLUTION_PREFERENCES
@@ -31,41 +31,32 @@ class GameActivity : AppCompatActivity() {
     private lateinit var surfaceView: GameView
     private lateinit var grid: Grid
     private lateinit var preferences: SharedPreferences
+    private var difficulty = DEFAULT_DIFFICULTY
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        RxManager.Builder.initAppContext(application)
         preferences = getSharedPreferences(GAME_PREFERENCES_FILE, MODE_PRIVATE)
 
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN)
 
-        difficult = intent.getIntExtra(DIFFICULT_EXTRA, difficult)
-        val continueGame = intent.getBooleanExtra(CONTINUE_EXTRA, false)
-
-        if (continueGame && preferences.contains(CONTINUE_PREFERENCES)) {
-            try {
-                difficult = preferences.getInt(DIFFICULT_EXTRA, difficult)
-                val startedGrid: Array2D =
-                    array2dFromStrings(FIELD_SIZE, FIELD_SIZE, preferences.getString(STARTED_GRID_PREFERENCES, "")!!)
-                val playerSolution: Array2D =
-                    array2dFromStrings(FIELD_SIZE, FIELD_SIZE, preferences.getString(PLAYER_SOLUTION_PREFERENCES, "")!!)
-
-                grid = Grid(startedGrid) {
-                    gotoFinishActivity("Congratulation!")
-                }
-                grid.loadUserSolution(playerSolution)
-            } catch (e: Exception) {
-                Log.e(LOG_TAG, "Fail of loading state", e)
-                Sentry.captureMessage("Fail of loading state", SentryLevel.ERROR)
-                Sentry.captureException(e)
-                preferences.edit().putBoolean(CONTINUE_PREFERENCES, false).apply()
-                gotoMenuActivity()
+        difficulty = intent.getIntExtra(DIFFICULT_EXTRA, DEFAULT_DIFFICULTY)
+        if (savedInstanceState != null || intent.getBooleanExtra(CONTINUE_EXTRA, false)) {
+            val restoredGrid = restoreGrid(savedInstanceState)
+            if (restoredGrid == null) {
+                finish()
                 return
             }
+            grid = restoredGrid
         } else {
-            grid = Grid(difficult) {
-                gotoFinishActivity("Congratulation!")
+            grid = Grid(difficulty) { onGameCompleted() }
+            saveGame()
+        }
+        grid.onChanged = { completed ->
+            if (!isFinishing) {
+                if (completed) clearSavedGame() else saveGame()
             }
         }
         val binding = ActivityGameBinding.inflate(layoutInflater)
@@ -81,19 +72,69 @@ class GameActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle?) {
         super.onSaveInstanceState(outState)
-        if (grid.checkSuccess()) {
-            preferences.edit()
-                .putBoolean(CONTINUE_PREFERENCES, false)
-                .apply()
-        } else {
-            val startedGrid = grid.firstRepresentation.joinToString(",")
-            val playerSolution = grid.grid.joinToString(",")
-            preferences.edit()
-                .putBoolean(CONTINUE_PREFERENCES, true)
-                .putString(STARTED_GRID_PREFERENCES, startedGrid)
-                .putString(PLAYER_SOLUTION_PREFERENCES, playerSolution)
-                .apply()
+        if (::grid.isInitialized && outState != null) {
+            outState.putInt(DIFFICULT_EXTRA, difficulty)
+            outState.putString(STARTED_GRID_PREFERENCES, grid.firstRepresentation.joinToString(","))
+            outState.putString(PLAYER_SOLUTION_PREFERENCES, grid.grid.joinToString(","))
         }
+    }
+
+    private fun restoreGrid(state: Bundle?): Grid? {
+        return try {
+            val startedGrid: String?
+            val playerSolution: String?
+            // Preferences may contain a move processed after the Activity state was saved.
+            if (preferences.getBoolean(CONTINUE_PREFERENCES, false)) {
+                difficulty = preferences.getInt(DIFFICULT_EXTRA, difficulty)
+                startedGrid = preferences.getString(STARTED_GRID_PREFERENCES, null)
+                playerSolution = preferences.getString(PLAYER_SOLUTION_PREFERENCES, null)
+            } else if (state?.containsKey(STARTED_GRID_PREFERENCES) == true) {
+                difficulty = state.getInt(DIFFICULT_EXTRA, difficulty)
+                startedGrid = state.getString(STARTED_GRID_PREFERENCES)
+                playerSolution = state.getString(PLAYER_SOLUTION_PREFERENCES)
+            } else {
+                return null
+            }
+
+            val initial = array2dFromStrings(FIELD_SIZE, FIELD_SIZE, requireNotNull(startedGrid))
+            val played = array2dFromStrings(FIELD_SIZE, FIELD_SIZE, requireNotNull(playerSolution))
+            require(initial.zip(played).all { (clue, value) -> clue == 0 || clue == value })
+            Grid(initial) { onGameCompleted() }.apply { loadUserSolution(played) }
+        } catch (e: IllegalArgumentException) {
+            discardInvalidGame(e)
+            null
+        } catch (e: ClassCastException) {
+            discardInvalidGame(e)
+            null
+        }
+    }
+
+    private fun saveGame() {
+        preferences.edit()
+            .putBoolean(CONTINUE_PREFERENCES, true)
+            .putInt(DIFFICULT_EXTRA, difficulty)
+            .putString(STARTED_GRID_PREFERENCES, grid.firstRepresentation.joinToString(","))
+            .putString(PLAYER_SOLUTION_PREFERENCES, grid.grid.joinToString(","))
+            .apply()
+    }
+
+    private fun discardInvalidGame(e: RuntimeException) {
+        Log.e(LOG_TAG, "Fail of loading state", e)
+        Sentry.captureException(e)
+        clearSavedGame()
+    }
+
+    private fun clearSavedGame() {
+        preferences.edit()
+            .remove(CONTINUE_PREFERENCES)
+            .remove(DIFFICULT_EXTRA)
+            .remove(STARTED_GRID_PREFERENCES)
+            .remove(PLAYER_SOLUTION_PREFERENCES)
+            .apply()
+    }
+
+    private fun onGameCompleted() {
+        if (!isFinishing) gotoFinishActivity(getString(R.string.score))
     }
 
     private fun gotoFinishActivity(title: String) {
@@ -101,16 +142,23 @@ class GameActivity : AppCompatActivity() {
         intent.putExtra(TITLE_EXTRA, title)
         surfaceView.render()
         background = surfaceView.getBitmap()
-        startActivity(intent)
+        startActivityForResult(intent, FINISH_GAME_REQUEST)
     }
 
-    private fun gotoMenuActivity() {
-        val intent = Intent(this, MenuActivity::class.java)
-        startActivity(intent)
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != FINISH_GAME_REQUEST || !::grid.isInitialized) return
+
+        if (resultCode == FinishGameActivity.RESULT_RETRY) {
+            startActivity(Intent(this, GameActivity::class.java).putExtra(DIFFICULT_EXTRA, difficulty))
+            finish()
+        } else if (resultCode == RESULT_OK || grid.checkSuccess()) {
+            finish()
+        }
     }
 
     companion object {
         var background: Bitmap? = null
-        private var difficult = 1
+        private const val FINISH_GAME_REQUEST = 1
     }
 }

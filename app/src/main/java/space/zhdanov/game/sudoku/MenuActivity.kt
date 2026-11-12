@@ -29,10 +29,6 @@ class MenuActivity : AppCompatActivity() {
         binding.root.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
         binding.isLoading.visibility = View.INVISIBLE
 
-        val preferences = getSharedPreferences(GAME_PREFERENCES_FILE, MODE_PRIVATE)
-        val continueGame = preferences.getBoolean(CONTINUE_PREFERENCES, false)
-
-        binding.resume.visibility = if (continueGame) VISIBLE else GONE
         binding.resume.setOnClickListener {
             binding.isLoading.visibility = VISIBLE
             val intent = Intent(this, GameActivity::class.java)
@@ -61,5 +57,7 @@ class MenuActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         binding.isLoading.visibility = View.INVISIBLE
+        val preferences = getSharedPreferences(GAME_PREFERENCES_FILE, MODE_PRIVATE)
+        binding.resume.visibility = if (preferences.getBoolean(CONTINUE_PREFERENCES, false)) VISIBLE else GONE
     }
 }

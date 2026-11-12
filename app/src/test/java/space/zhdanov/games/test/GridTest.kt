@@ -3,11 +3,47 @@ package space.zhdanov.games.test
 import space.zhdanov.game.sudoku.models.Coordinate
 import space.zhdanov.game.sudoku.models.Field.Companion.FIELD_SIZE
 import space.zhdanov.game.sudoku.models.Grid
+import space.zhdanov.game.sudoku.utils.Array2D
 import space.zhdanov.game.sudoku.utils.array2dOf
 import org.junit.Assert.*
 import org.junit.Test
 
 class GridTest {
+    @Test
+    fun `restored moves immediately highlight conflicts`() {
+        val initial = Array2D(FIELD_SIZE, FIELD_SIZE, 0).apply { this[0, 0] = 7 }
+        val played = initial.clone().apply { this[1, 0] = 7 }
+        val grid = Grid(initial) {}
+
+        grid.loadUserSolution(played)
+
+        assertEquals(7, grid.grid[1, 0])
+        assertFalse(grid.isStartedCell(1, 0))
+        assertEquals(setOf(Coordinate(0, 0), Coordinate(1, 0)), grid.mistakes)
+    }
+
+    @Test
+    fun `only changed player cells notify progress and the final move reports completion`() {
+        val initial = Array2D(FIELD_SIZE, FIELD_SIZE) { x, y ->
+            (x + 3 * (y % 3) + y / 3) % FIELD_SIZE + 1
+        }.apply {
+            this[0, 0] = 0
+            this[1, 0] = 0
+        }
+        var victories = 0
+        val grid = Grid(initial) { victories++ }
+        val progress = mutableListOf<Boolean>()
+        grid.onChanged = { progress.add(it) }
+
+        assertFalse(grid.changeCell(2, 0, 5))
+        assertTrue(grid.changeCell(0, 0, 1))
+        assertTrue(grid.changeCell(0, 0, 1))
+        assertTrue(grid.changeCell(1, 0, 2))
+
+        assertEquals(listOf(false, true), progress)
+        assertEquals(1, victories)
+    }
+
     @Test
     fun `must generate right full grid with 1 solution`() {
         val grid = Grid(difficult = 10) {}

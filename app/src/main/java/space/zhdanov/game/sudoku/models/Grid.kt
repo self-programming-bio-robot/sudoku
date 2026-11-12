@@ -4,6 +4,7 @@ import space.zhdanov.game.sudoku.utils.Array2D
 
 class Grid(val grid: Array2D, private val onSuccess: (score: Int) -> Unit) {
     var mistakes: Set<Coordinate> = findMistakes()
+    var onChanged: ((completed: Boolean) -> Unit)? = null
 
     constructor(difficult: Int = 1, onSuccess: (score: Int) -> Unit) : this(generateNewGrid(difficult), onSuccess)
 
@@ -11,6 +12,7 @@ class Grid(val grid: Array2D, private val onSuccess: (score: Int) -> Unit) {
 
     fun loadUserSolution(solutionGrid: Array2D) {
         solutionGrid.copyInto(grid)
+        mistakes = findMistakes()
     }
 
     fun findSolution(): Int {
@@ -23,16 +25,15 @@ class Grid(val grid: Array2D, private val onSuccess: (score: Int) -> Unit) {
         firstRepresentation[x, y] != 0
 
     fun changeCell(x: Int, y: Int, newValue: Int): Boolean {
-        return if (isStartedCell(x, y)) {
-            return false
-        } else {
-            grid[x, y] = newValue
-            mistakes = findMistakes()
-            if (checkSuccess()) {
-                onSuccess(0)
-            }
-            true
-        }
+        if (isStartedCell(x, y)) return false
+        if (grid[x, y] == newValue) return true
+
+        grid[x, y] = newValue
+        mistakes = findMistakes()
+        val completed = checkSuccess()
+        onChanged?.invoke(completed)
+        if (completed) onSuccess(0)
+        return true
     }
 
     override fun toString(): String = grid.toString()

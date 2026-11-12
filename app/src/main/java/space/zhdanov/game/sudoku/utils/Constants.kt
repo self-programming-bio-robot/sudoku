@@ -6,6 +6,7 @@ const val STARTED_GRID_PREFERENCES = "startedGrid"
 const val PLAYER_SOLUTION_PREFERENCES = "playerSolution"
 
 const val DIFFICULT_EXTRA = "difficult"
+const val DEFAULT_DIFFICULTY = 25
 const val STEP_EXTRA = "step"
 const val CONTINUE_EXTRA = "continue"
 const val TITLE_EXTRA = "title"

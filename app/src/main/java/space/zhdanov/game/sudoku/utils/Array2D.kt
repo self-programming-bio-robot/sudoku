@@ -64,5 +64,7 @@ fun array2dOf(columns: Int, rows: Int, constructor: () -> IntArray): Array2D {
 
 fun array2dFromStrings(columns: Int, rows: Int, string: String): Array2D =
     array2dOf(columns, rows) {
-        string.split(",").map { it.toInt() }.toIntArray()
+        val cells = string.split(",").map { it.toInt() }
+        require(cells.size == columns * rows && cells.all { it in 0..9 })
+        cells.toIntArray()
     }

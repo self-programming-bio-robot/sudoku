@@ -1,7 +1,6 @@
 package space.zhdanov.game.sudoku
 
 import android.annotation.SuppressLint
-import android.content.Intent
 import android.graphics.drawable.BitmapDrawable
 import android.os.Bundle
 import android.support.v7.app.AppCompatActivity
@@ -35,11 +34,17 @@ class FinishGameActivity : AppCompatActivity() {
         }
 
         finishButton.setOnClickListener {
-            startActivity(Intent(this, MenuActivity::class.java))
+            setResult(RESULT_OK)
+            finish()
         }
 
         retryButton.setOnClickListener {
-            startActivity(Intent(this, GameActivity::class.java))
+            setResult(RESULT_RETRY)
+            finish()
         }
+    }
+
+    companion object {
+        const val RESULT_RETRY = RESULT_FIRST_USER
     }
 }
