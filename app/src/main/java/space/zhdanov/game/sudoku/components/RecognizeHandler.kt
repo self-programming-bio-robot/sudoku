@@ -1,92 +1,80 @@
 package space.zhdanov.game.sudoku.components
 
-import android.content.Context
+import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
 import android.content.res.AssetManager
 import android.graphics.Bitmap
-import android.util.Log
-import org.tensorflow.lite.Interpreter
-import java.io.FileInputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.channels.FileChannel
+import org.json.JSONObject
+import java.nio.FloatBuffer
 
-class RecognizeHandler(context: Context) {
-    private val interpreter: Interpreter
-    private val inputImageWidth: Int
-    private val inputImageHeight: Int
-    private val modelInputSize: Int
-
-    init {
-        val assetManager = context.assets
-        val model = loadModelFile(assetManager, "mnist.tflite")
-        interpreter = Interpreter(model)
-
-        val inputShape = interpreter.getInputTensor(0).shape()
-        inputImageWidth = inputShape[1]
-        inputImageHeight = inputShape[2]
-        modelInputSize = FLOAT_TYPE_SIZE * inputImageWidth * inputImageHeight * PIXEL_SIZE
+class RecognizeHandler(private val assets: AssetManager) : AutoCloseable {
+    private var session: OrtSession? = null
+    private var closed = false
+    private val thresholds by lazy {
+        val config = assets.open("digit-recognizer.json").bufferedReader().use { JSONObject(it.readText()) }
+        val labels = config.getJSONObject("output").getJSONArray("labels")
+        val expectedLabels = (1..9).map(Int::toString) + "ERASE"
+        require(labels.length() == expectedLabels.size)
+        val configured = config.getJSONObject("thresholds")
+        expectedLabels.mapIndexed { index, label ->
+            require(labels.getString(index) == label)
+            require(configured.has(label))
+            if (configured.isNull(label)) Float.POSITIVE_INFINITY
+            else configured.getDouble(label).also { require(it in 0.0..1.0) }.toFloat()
+        }.toFloatArray()
     }
 
-    fun recognize(bitmap: Bitmap): Int {
-        val resizedImage = Bitmap.createScaledBitmap(
-            bitmap,
-            inputImageWidth,
-            inputImageHeight,
-            true
-        )
-        val byteBuffer = convertBitmapToByteBuffer(resizedImage)
+    @Synchronized
+    fun recognize(bitmap: Bitmap): Int? {
+        if (closed) return null
+        val configuredThresholds = thresholds
+        val environment = OrtEnvironment.getEnvironment()
+        val activeSession = session ?: createSession(environment).also { session = it }
 
-        val output = Array(1) { FloatArray(OUTPUT_CLASSES_COUNT) }
-
-        interpreter.run(byteBuffer, output)
-        val result = output[0]
-
-        Log.i("recognize", "recognized vector ${result.joinToString()}")
-
-        val maxIndex = result.indices
-            .filter { result[it] > MIN_RECOGNIZE_LEVEL }
-            .maxByOrNull { result[it] }
-            ?:- 0
-
-        return maxIndex
-    }
-
-    private fun loadModelFile(assetManager: AssetManager, filename: String): ByteBuffer {
-        val fileDescriptor = assetManager.openFd(filename)
-        val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
-        val fileChannel = inputStream.channel
-        val startOffset = fileDescriptor.startOffset
-        val declaredLength = fileDescriptor.declaredLength
-        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
-    }
-
-    private fun convertBitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
-        val byteBuffer = ByteBuffer.allocateDirect(modelInputSize)
-        byteBuffer.order(ByteOrder.nativeOrder())
-
-        val pixels = IntArray(inputImageWidth * inputImageHeight)
-        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-
-        for (pixelValue in pixels) {
-            val normalizedPixelValue = normalizePixelColor(pixelValue)
-            byteBuffer.putFloat(normalizedPixelValue)
+        val pixels = IntArray(IMAGE_SIZE * IMAGE_SIZE)
+        bitmap.getPixels(pixels, 0, IMAGE_SIZE, 0, 0, IMAGE_SIZE, IMAGE_SIZE)
+        val input = FloatArray(pixels.size) { index ->
+            val pixel = pixels[index]
+            val red = pixel shr 16 and 0xFF
+            val green = pixel shr 8 and 0xFF
+            val blue = pixel and 0xFF
+            1f - (red + green + blue) / 3f / 255f
         }
-
-        return byteBuffer
+        val tensor = OnnxTensor.createTensor(environment, FloatBuffer.wrap(input), INPUT_SHAPE)
+        try {
+            val result = activeSession.run(mapOf("image" to tensor), setOf("scores"))
+            try {
+                val scores = (result[0].value as Array<*>).single() as FloatArray
+                return decodeRecognition(scores, configuredThresholds)
+            } finally {
+                result.close()
+            }
+        } finally {
+            tensor.close()
+        }
     }
 
-    private fun normalizePixelColor(pixelValue: Int): Float {
-        val r = (pixelValue shr 16 and 0xFF)
-        val g = (pixelValue shr 8 and 0xFF)
-        val b = (pixelValue and 0xFF)
+    private fun createSession(environment: OrtEnvironment): OrtSession {
+        val options = OrtSession.SessionOptions()
+        try {
+            options.setIntraOpNumThreads(1)
+            val model = assets.open("digit-recognizer.onnx").use { it.readBytes() }
+            return environment.createSession(model, options)
+        } finally {
+            options.close()
+        }
+    }
 
-        return 1 - ((r + g + b) / 3.0f / 255.0f)
+    @Synchronized
+    override fun close() {
+        closed = true
+        session?.close()
+        session = null
     }
 
     companion object {
-        private const val FLOAT_TYPE_SIZE = 4
-        private const val PIXEL_SIZE = 1
-        private const val OUTPUT_CLASSES_COUNT = 10
-        private const val MIN_RECOGNIZE_LEVEL = 0.5f
+        const val IMAGE_SIZE = 28
+        private val INPUT_SHAPE = longArrayOf(1, 1, IMAGE_SIZE.toLong(), IMAGE_SIZE.toLong())
     }
 }

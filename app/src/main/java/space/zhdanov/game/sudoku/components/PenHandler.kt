@@ -8,7 +8,6 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.RectF
-import android.os.Handler
 import android.util.Log
 import com.onyx.android.sdk.pen.RawInputCallback
 import com.onyx.android.sdk.pen.TouchHelper
@@ -17,6 +16,7 @@ import com.onyx.android.sdk.pen.data.TouchPointList
 import com.onyx.android.sdk.rx.RxCallback
 import com.onyx.android.sdk.rx.RxManager
 import space.zhdanov.game.sudoku.models.Field
+import space.zhdanov.game.sudoku.models.Grid.Companion.FIELD_SIZE
 import space.zhdanov.game.sudoku.requests.PartialRefreshRequest
 import space.zhdanov.game.sudoku.requests.RecognizeRequest
 import space.zhdanov.game.sudoku.utils.extend
@@ -39,7 +39,9 @@ class PenHandler(
     private val canvas: Canvas = Canvas(bitmap)
     private val rxManager = RxManager.Builder.sharedSingleThreadManager()
     private val drawRect: RectF = RectF(startRect)
-    private val uiHandler: Handler = Handler()
+    private val strokeLock = Any()
+    @Volatile
+    private var active = true
 
     lateinit var touchHelper: TouchHelper
 
@@ -59,7 +61,9 @@ class PenHandler(
     }
 
     override fun onRawDrawingTouchPointListReceived(points: TouchPointList) {
-        drawScribbleToBitmap(points.points)
+        synchronized(strokeLock) {
+            if (active && points.points.isNotEmpty()) drawScribbleToBitmap(points.points)
+        }
     }
 
     override fun onBeginRawErasing(p0: Boolean, p1: TouchPoint) {
@@ -74,55 +78,81 @@ class PenHandler(
     override fun onRawErasingTouchPointListReceived(p0: TouchPointList) {
     }
 
+    fun deactivate() {
+        active = false
+    }
+
     override fun onPenUpRefresh(refreshRect: RectF) {
-        val cellRect = field.getCellRect(drawRect)
-        val normalized = cellRect.intersection(drawRect).normalize()
+        val inkRect = RectF(refreshRect)
+        val (stroke, bounds) = synchronized(strokeLock) {
+            if (!active || drawRect == startRect) return
+            val bounds = RectF(drawRect)
+            val normalized = field.getCellRect(bounds).intersection(bounds).normalize()
+            val stroke = if (normalized.width() >= 0f && normalized.height() >= 0f) {
+                val crop = normalized.extend(max(normalized.width() / 5, paint.strokeWidth / 2))
+                val size = RecognizeHandler.IMAGE_SIZE
+                Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { snapshot ->
+                    Canvas(snapshot).apply {
+                        drawColor(Color.WHITE)
+                        scale(size / crop.width(), size / crop.height())
+                        translate(-crop.left, -crop.top)
+                        drawBitmap(bitmap, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+                    }
+                }
+            } else null
+            canvas.drawColor(Color.WHITE)
+            drawRect.set(startRect)
+            Pair(stroke, bounds)
+        }
 
-        val recognizeRequest = RecognizeRequest(
-            bitmap = bitmap,
-            rectf = normalized.extend(normalized.width() / 5),
-            recognizeHandler = recognizeHandler
-        )
+        val (x, y) = field.getCellCoordinates(bounds.centerX(), bounds.centerY())
+        if (stroke == null || x !in 0 until FIELD_SIZE || y !in 0 until FIELD_SIZE || field.grid.isStartedCell(x, y)) {
+            refreshInk(listOf(inkRect))
+            return
+        }
 
-        drawRect.set(startRect)
+        val cellRect = field.getCellRect(x, y)
+        val recognizeRequest = RecognizeRequest(stroke, recognizeHandler)
         rxManager.enqueue(
             recognizeRequest,
             object : RxCallback<RecognizeRequest>() {
                 override fun onNext(request: RecognizeRequest) {
+                    if (!active) return
+                    val digit = request.recognizedDigit
+                    if (digit == null) {
+                        refreshInk(listOf(inkRect))
+                        return
+                    }
                     val lastMistakeRects = field.getRectOfMistakes()
-                    val (x, y) = field.getCellCoordinates(request.rectf.centerX(), request.rectf.centerY())
                     val updated = onRecognizeDigit?.let {
-                        it(x, y, request.recognizedDigit)
+                        it(x, y, digit)
                     } ?: run {
-                        field.grid.changeCell(x, y, request.recognizedDigit)
+                        field.grid.changeCell(x, y, digit)
                     }
 
-                    if (updated) {
-                        Log.i("recognize", "updated")
-                        field.draw()
-                        val partialRefreshRequest = PartialRefreshRequest(
-                            context = context,
-                            surfaceView = surfaceView,
-                            fieldBitmap = field.bitmap,
-                            refreshRect = listOf(cellRect + refreshRect) + field.getRectOfMistakes() + lastMistakeRects,
-                            touchHelper = touchHelper,
-                            penEnable = penEnable
-                        )
+                    if (updated) field.draw()
+                    val dirtyRects = if (updated) {
+                        listOf(cellRect + inkRect) + field.getRectOfMistakes() + lastMistakeRects
+                    } else listOf(inkRect)
+                    refreshInk(dirtyRects)
+                }
 
-                        rxManager.enqueue(
-                            partialRefreshRequest,
-                            object : RxCallback<PartialRefreshRequest>() {
-                                override fun onNext(partialRefreshRequest: PartialRefreshRequest) {
-                                    uiHandler.post {
-                                        canvas.drawColor(Color.WHITE)
-                                    }
-                                }
-                            }
-                        )
-                    }
+                override fun onError(error: Throwable) {
+                    Log.e("recognize", "Failed to recognize ink", error)
+                    refreshInk(listOf(inkRect))
                 }
             }
         )
+    }
+
+    private fun refreshInk(rects: List<RectF>) {
+        if (!active) return
+        val request = PartialRefreshRequest(
+            context, surfaceView, rects, field.bitmap, touchHelper, penEnable, isActive = { active }
+        )
+        rxManager.enqueue(request, object : RxCallback<PartialRefreshRequest>() {
+            override fun onNext(request: PartialRefreshRequest) = Unit
+        })
     }
 
     private fun drawScribbleToBitmap(list: List<TouchPoint>) {

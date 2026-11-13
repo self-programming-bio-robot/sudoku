@@ -17,7 +17,8 @@ import space.zhdanov.game.sudoku.utils.drawRendererContent
 
 class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, attrs), SurfaceHolder.Callback {
 
-    private val recognizeHandler = RecognizeHandler(context)
+    private lateinit var recognizeHandler: RecognizeHandler
+    private var activePenHandler: PenHandler? = null
 
     lateinit var grid: Grid
     lateinit var touchHelper: TouchHelper
@@ -32,6 +33,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     }
 
     override fun surfaceCreated(surfaceHolder: SurfaceHolder) {
+        recognizeHandler = RecognizeHandler(context.assets)
         val (penHandler, limit) = init()
 
         touchHelper = TouchHelper.create(
@@ -69,6 +71,7 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
     }
 
     private fun init(): Pair<PenHandler, Rect> {
+        activePenHandler?.deactivate()
         val limit = Rect()
         this.getLocalVisibleRect(limit)
 
@@ -82,14 +85,18 @@ class GameView(context: Context, attrs: AttributeSet?) : SurfaceView(context, at
             field = field,
             recognizeHandler = recognizeHandler
         )
+        activePenHandler = penHandler
         return Pair(penHandler, limit)
     }
 
     override fun surfaceDestroyed(p0: SurfaceHolder?) {
+        activePenHandler?.deactivate()
+        activePenHandler = null
         touchHelper
             .setRawDrawingRenderEnabled(false)
             .setRawDrawingEnabled(false)
             .closeRawDrawing()
+        recognizeHandler.close()
     }
 
     fun getBitmap(): Bitmap {

@@ -46,3 +46,8 @@ The full run writes to `recognition/out/full/`. Smoke results go to
 The erase threshold is selected on validation images. Test results measure
 MNIST digits and synthetic gestures. Quality on real BOOX handwriting and
 Android runtime compatibility require a separate device check.
+
+The Android app packages the selected two-model ensemble from the sweep
+as `app/src/main/assets/digit-recognizer.onnx` and its thresholds as
+`digit-recognizer.json` in the same directory. Update both assets together.
+The original `recognition/mnist.tflite` remains available for Python benchmarks.

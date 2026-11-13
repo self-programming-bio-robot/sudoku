@@ -19,7 +19,8 @@ class PartialRefreshRequest(
     private val refreshRect: List<RectF>,
     private val fieldBitmap: Bitmap,
     private val touchHelper: TouchHelper,
-    private val penEnable: Boolean
+    private val penEnable: Boolean,
+    private val isActive: () -> Boolean
 ) : RxRequest() {
 
     @Throws(Exception::class)
@@ -28,12 +29,15 @@ class PartialRefreshRequest(
     }
 
     private fun renderToScreen(surfaceView: GameView) {
-        touchHelper.setRawDrawingRenderEnabled(false)
-        EpdController.setViewDefaultUpdateMode(surfaceView, UpdateMode.HAND_WRITING_REPAINT_MODE)
+        if (!isActive()) return
         val bounds = refreshRect.reduce { acc, rectF -> acc + rectF }
+        if (bounds.isEmpty) return
         val renderRect = RectUtils.toRect(bounds)
-        val canvas = surfaceView.holder.lockCanvas(renderRect)
+        val canvas = surfaceView.holder.lockCanvas(renderRect) ?: return
         try {
+            if (!isActive()) return
+            touchHelper.setRawDrawingRenderEnabled(false)
+            EpdController.setViewDefaultUpdateMode(surfaceView, UpdateMode.HAND_WRITING_REPAINT_MODE)
             canvas.clipRect(bounds)
             surfaceView.onRender?.let { it(canvas) }
                 ?: run {
@@ -45,7 +49,7 @@ class PartialRefreshRequest(
         } finally {
             surfaceView.holder.unlockCanvasAndPost(canvas)
             EpdController.resetViewUpdateMode(surfaceView)
-            touchHelper.setRawDrawingRenderEnabled(penEnable)
+            if (isActive()) touchHelper.setRawDrawingRenderEnabled(penEnable)
         }
 
     }

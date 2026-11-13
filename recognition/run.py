@@ -31,7 +31,7 @@ from evaluation import (
 
 
 ROOT = Path(__file__).resolve().parent
-LEGACY_MODEL = ROOT.parent / "app/src/main/assets/mnist.tflite"
+LEGACY_MODEL = ROOT / "mnist.tflite"
 SEED = 1729
 OPSET = 17
 ONNX_INPUT_SHAPE = (1, 1, IMAGE_SIZE, IMAGE_SIZE)
