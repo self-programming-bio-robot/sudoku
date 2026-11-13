@@ -51,3 +51,32 @@ The Android app packages the selected two-model ensemble from the sweep
 as `app/src/main/assets/digit-recognizer.onnx` and its thresholds as
 `digit-recognizer.json` in the same directory. Update both assets together.
 The original `recognition/mnist.tflite` remains available for Python benchmarks.
+
+## Collect strokes from the debug build
+
+The existing `debug` build saves the 28×28 PNG used for inference in private
+storage excluded from Android backups. Build and install it from the repository root.
+
+```powershell
+.\gradlew.bat assembleDebug
+adb install -r -t app/build/outputs/apk/debug/app-debug.apk
+```
+
+A stroke over a cell filled by the player is labeled `ERASE`. Otherwise the
+model's accepted digit or erase result supplies the label. Rejected inputs
+are exported as `unlabeled`. These labels come from the cell state and model,
+so review them before using the images for training.
+
+Connect an authorized device with USB debugging and run from the repository
+root with `adb` on PATH. The exporter uses the Python standard library.
+
+```powershell
+python recognition/export_samples.py
+python recognition/export_samples.py --delete
+```
+
+Images go into `recognition/data/boox/{1..9,ERASE,unlabeled}/` by default.
+Use `--output PATH` for a different destination and `--serial SERIAL` if
+multiple devices are attached. With `--delete`, the script removes the
+exported files from the device after the whole batch has been verified and
+saved. A repeated export reuses any byte-identical files already on the PC.

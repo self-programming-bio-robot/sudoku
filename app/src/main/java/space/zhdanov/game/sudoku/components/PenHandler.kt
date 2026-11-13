@@ -15,6 +15,7 @@ import com.onyx.android.sdk.pen.data.TouchPoint
 import com.onyx.android.sdk.pen.data.TouchPointList
 import com.onyx.android.sdk.rx.RxCallback
 import com.onyx.android.sdk.rx.RxManager
+import space.zhdanov.game.sudoku.BuildConfig
 import space.zhdanov.game.sudoku.models.Field
 import space.zhdanov.game.sudoku.models.Grid.Companion.FIELD_SIZE
 import space.zhdanov.game.sudoku.requests.PartialRefreshRequest
@@ -119,6 +120,10 @@ class PenHandler(
                 override fun onNext(request: RecognizeRequest) {
                     if (!active) return
                     val digit = request.recognizedDigit
+                    if (BuildConfig.DEBUG) {
+                        val cellWasFilled = field.grid.grid[x, y] != 0
+                        RecognitionSamples.save(context.noBackupFilesDir, stroke, sampleLabel(cellWasFilled, digit))
+                    }
                     if (digit == null) {
                         refreshInk(listOf(inkRect))
                         return
